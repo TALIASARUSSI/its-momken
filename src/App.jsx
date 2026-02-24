@@ -1,4 +1,6 @@
 import { vocabulary } from './data/vocabulary';
+import { newsData } from './data/news';
+import { cultureData } from './data/culture';
 import { useState, useEffect, useRef, useCallback } from "react";
 
 // ============================================================
@@ -126,17 +128,7 @@ const fallbackWordOfDay = {
   grammarNote: "المילה 'دلتنگی' מורכבת מ-دل (לב) ו-تنگی (צרות) — לב צר מגעגועים. ביטוי מטאפורי יפהפה.",
 };
 
-const fallbackNews = [
-  { id:1, title:"ایران دور جدید غنی‌سازی اورانیوم را آغاز کرد", titleHebrew:"איראן מתחילה סבב חדש של העשרת אורניום", persian:"آژانس بین‌المللی انرژی اتمی اعلام کرد که ایران غنی‌سازی اورانیوم تا سطح ۶۰ درصد را در تأسیسات نطنز گسترش داده است.", transliteration:"Azhans-e beinalmellali e'lam kard ke Iran ghanisazi-ye oraniom ta sath-e shast darsad ra dar Natanz gostaresh dade ast.", hebrew:"הסוכנות לאנרגיה אטומית הודיעה כי איראן הרחיבה את העשרת האורניום לרמת 60% במתקן נתנז.", quiz:[{q:"לאיזה אחוז הועשר האורניום?",options:["20%","45%","60%","90%"],answer:2}]},
-  { id:2, title:"اعتراضات گسترده در تهران", titleHebrew:"מחאות נרחבות בטהרן", persian:"هزاران نفر در تهران در اعتراض به گرانی و بیکاری تجمع کردند. نیروهای امنیتی با گاز اشک‌آور پاسخ دادند.", transliteration:"Hezaran nafar dar Tehran dar e'teras be gerani va bikari tajamo' kardand.", hebrew:"אלפי אנשים התאספו בטהרן במחאה על יוקר המחיה ואבטלה.", quiz:[{q:"מה גרם למחאות?",options:["בחירות","גרעין","יוקר המחיה","מזג אוויר"],answer:2}]},
-];
-
-const cultureCards = [
-  { id:1, emoji:"🍵", title:"תרבות התה הפרסי", titlePersian:"فرهنگ چای ایرانی", persian:"در ایران، چای سمبل مهمان‌نوازی است. هر مهمانی با یک استکان چای شروع می‌شود.", transliteration:"Dar Iran, chai sambol-e mehmananvazi ast. Har mehmani ba yek estekan-e chai shoroo mishavad.", hebrew:"באיראן, תה הוא סמל האירוח. כל ביקור מתחיל בכוס תה." },
-  { id:2, emoji:"🎊", title:"נוורוז", titlePersian:"نوروز - سال نو ایرانی", persian:"نوروز اول فروردین است و بزرگترین جشن ایرانی است. خانواده‌ها دور هم جمع می‌شوند.", transliteration:"Nowruz aval-e Farvardin ast va bozorgtarin jashn-e Irani ast.", hebrew:"נוורוז הוא החג הפרסי הגדול ביותר. משפחות מתאספות יחד." },
-  { id:3, emoji:"🏛️", title:"נימוסים פרסיים", titlePersian:"ادب و نزاکت ایرانی", persian:"در ایران رسم تعارف خیلی مهم است. مردم معمولاً چند بار چیزی را رد می‌کنند قبل از قبول کردن.", transliteration:"Dar Iran rasm-e ta'arof khyli mohem ast.", hebrew:"מסורת הנימוס (תעארוף) חשובה מאוד. אנשים מסרבים כמה פעמים לפני שמקבלים." },
-  { id:4, emoji:"🕌", title:"אדריכלות פרסית", titlePersian:"معماری ایرانی", persian:"معماری ایرانی با کاشی‌های آبی و فیروزه‌ای مشهور است. مسجد امام اصفهان یکی از زیباترین‌هاست.", transliteration:"Me'mari-ye Irani ba kashi-haye abi va firuzeh-ei mashhur ast.", hebrew:"האדריכלות האיראנית מפורסמת בהוראות הכחולות. מסגד האימאם באספהאן הוא אחד היפים." },
-];
+const cultureCards = cultureData;
 
 const scenarios = [
   { id:"bazaar",     label:"🛍️ בזאר",        labelPersian:"بازار"    },
@@ -732,7 +724,7 @@ function Vocabulary({ stats, setStats }) {
 }
 
 // ── Culture ────────────────────────────────────────────────────
-function Culture() {
+function Culture({ cultureCards }) {
   const [expanded, setExpanded] = useState(null);
   return (
     <div>
@@ -780,93 +772,106 @@ function News({ stats, setStats, newsItems, newsLoading, newsError, refreshNews 
     if (quizState[nid]) return;
     const correct = j === ans;
     setQuizState(s => ({ ...s, [nid]:{ selected:j, correct } }));
-    if (correct) setStats(s => ({ ...s, xp: s.xp + 15 }));
+   if (correct) setStats(s => ({ ...s, xp: s.xp + 15, words: s.words + 1 }));
   };
+function News({ stats, setStats, newsItems, newsLoading, newsError, refreshNews }) {
+  // תוודאי ששלוש השורות האלו נמצאות כאן:
+  const [quizState, setQuizState] = useState({});
+  const [sharedIds, setSharedIds] = useState(new Set());
+  const [revealed, setRevealed] = useState(new Set());
 
-  return (
-    <div>
-      <div style={{ display:"flex",alignItems:"center",gap:8,marginBottom:14 }}>
-        <div className="section-title" style={{ marginBottom:0 }}>📰 חדשות & OSINT</div>
-        <span className="ai-badge">✦ Gemini AI</span>
-      </div>
-      <div className="card" style={{ background:"linear-gradient(135deg,#1F2A44,#2a3a5c)",marginBottom:14,textAlign:"center" }}>
-        <div style={{ fontSize:10,letterSpacing:2,textTransform:"uppercase",opacity:.38,color:"white",marginBottom:5 }}>OSINT MODE</div>
-        <div style={{ fontFamily:"'Playfair Display',serif",fontSize:16,color:"white",fontWeight:700 }}>חדשות פרסיות — מיוצרות ע"י AI</div>
-        <div style={{ fontSize:11,color:"rgba(255,255,255,.38)",marginTop:3,fontStyle:"italic" }}>Reading Iranian news? ITS MOMKEN.</div>
-        <div style={{ marginTop:10,background:"rgba(244,196,48,.1)",border:"1px solid rgba(244,196,48,.22)",borderRadius:9,padding:"7px 11px",fontSize:11,color:"rgba(255,255,255,.6)" }}>
-          📖 קרא את הפרסית קודם — לחץ "הצג תרגום" כשאתה מוכן
+  // וגם הפונקציות האלו שמופעלות בלחיצה על כפתורים:
+  const toggleReveal = id => setRevealed(prev => {
+    const n = new Set(prev); 
+    n.has(id) ? n.delete(id) : n.add(id); 
+    return n;
+  });
+
+  const handleAnswer = (id, idx, correct) => {
+    if (quizState[id]) return;
+    const isCorrect = idx === correct;
+    setQuizState(prev => ({ ...prev, [id]: { correct: isCorrect } }));
+    if (isCorrect) setStats(prev => ({ ...prev, xp: prev.xp + 15, words: prev.words + 1 }));
+  };
+}
+  // כאן מתחיל ה-return שלך..
+  
+ return (
+    <div className="fade-up">
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
+        <div className="section-title" style={{ margin:0 }}>
+          <span className="ai-badge">✨ Gemini AI</span> חדשות היום
         </div>
+        <button onClick={refreshNews} className="audio-btn" style={{ marginLeft:"auto" }}>🔄 רענן</button>
       </div>
 
-      {newsLoading && [1,2,3].map(i => <LoadingCard key={i} lines={4} label={i===1?"Gemini מייצר חדשות OSINT...":"..."} />)}
-      {newsError   && <ErrorCard message="הייתה שגיאה עם Gemini. מוצגות חדשות ברירת מחדל." onRetry={refreshNews} />}
-
-      {!newsLoading && newsItems.map((n,i) => {
-        const isRev = revealed.has(n.id);
-        return (
-          <div className="news-card fade-up" key={n.id} style={{ animationDelay:`${i*.07}s` }}>
-            <div className="news-header">
-              <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6 }}>
-                <span className="badge" style={{ background:"rgba(244,196,48,.2)",color:"#F4C430" }}>🗞️ OSINT</span>
-                {!newsError && <span className="ai-badge" style={{ background:"rgba(255,255,255,.1)",color:"rgba(255,255,255,.7)",border:"1px solid rgba(255,255,255,.2)" }}>✦ AI</span>}
-              </div>
-              <div style={{ display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:7 }}>
-                <AudioButton text={n.title} />
-                <div className="persian" style={{ fontSize:15,fontWeight:700,color:"white",textAlign:"right",direction:"rtl",lineHeight:1.5,flex:1 }}>{n.title}</div>
-              </div>
-              <div style={{ fontSize:12,color:"rgba(255,255,255,.45)",marginTop:4 }}>{n.titleHebrew}</div>
-            </div>
-            <div className="news-body">
-              <div style={{ display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:7,marginBottom:7 }}>
-                <AudioButton text={n.persian} />
-                <div className="persian" style={{ fontSize:14,fontWeight:500,direction:"rtl",textAlign:"right",lineHeight:1.85,flex:1 }}>{n.persian}</div>
-              </div>
-              {!isRev ? (
-                <button className="btn btn-show" style={{ marginBottom:14 }} onClick={()=>toggleReveal(n.id)}>
-                  👁️ הצג תרגום — مشاهده ترجمه
-                </button>
-              ) : (
-                <div className="fade-up" style={{ marginBottom:14 }}>
-                  <div style={{ height:1,background:"rgba(0,0,0,.06)",marginBottom:9 }} />
-                  <div style={{ fontSize:11,fontStyle:"italic",color:"rgba(0,0,0,.35)",marginBottom:7 }}>{n.transliteration}</div>
-                  <div className="hebrew" style={{ fontSize:13,direction:"rtl",textAlign:"right",color:"var(--indigo)",fontWeight:600,lineHeight:1.75 }}>{n.hebrew}</div>
-                  <button style={{ background:"none",border:"none",fontSize:10,color:"rgba(0,0,0,.25)",cursor:"pointer",marginTop:5 }} onClick={()=>toggleReveal(n.id)}>הסתר ↑</button>
-                </div>
-              )}
-              {!quizState[n.id] ? (
-                <div>
-                  <div style={{ fontSize:12,fontWeight:700,marginBottom:9,color:"var(--indigo)" }}>🧠 בחן את הבנתך</div>
-                  <div className="hebrew" style={{ fontSize:13,direction:"rtl",textAlign:"right",marginBottom:9,fontWeight:700 }}>{n.quiz[0].q}</div>
-                  {n.quiz[0].options.map((opt,j)=>(
-                    <button key={j} className="quiz-opt" onClick={()=>handleAnswer(n.id,j,n.quiz[0].answer)}>{opt}</button>
-                  ))}
-                </div>
-              ) : (
-                <div style={{ textAlign:"center",padding:"11px",background:quizState[n.id].correct?"rgba(0,165,145,.08)":"rgba(220,50,50,.08)",borderRadius:11 }}>
-                  <div style={{ fontSize:22,marginBottom:5 }}>{quizState[n.id].correct?"🎉":"😅"}</div>
-                  <div style={{ fontWeight:700,color:quizState[n.id].correct?"var(--turquoise)":"#dc3232",fontSize:13 }}>
-                    {quizState[n.id].correct?"נכון! +15 XP — ITS MOMKEN.":"לא נכון. קרא שוב!"}
+      {newsLoading ? (
+        <div style={{ textAlign:"center", padding:40 }}><div className="spinner"></div></div>
+      ) : newsError ? (
+        <div className="card" style={{ color:"#dc3232", textAlign:"center" }}>{newsError}</div>
+      ) : (
+        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+          {newsItems.map((n) => (
+            <div key={n.id} className="news-card fade-up">
+              <div className="news-header">
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"start", gap:10 }}>
+                  <div style={{ flex:1 }}>
+                    <div className="persian" style={{ color:"var(--saffron)", fontSize:16, fontWeight:600, lineHeight:1.4, textAlign:"right" }}>{n.title}</div>
+                    <div className="hebrew" style={{ color:"rgba(255,255,255,0.7)", fontSize:12, marginTop:4, textAlign:"right" }}>{n.titleHebrew}</div>
                   </div>
                 </div>
-              )}
-              <div style={{ height:1,background:"rgba(0,0,0,.06)",margin:"13px 0 11px" }} />
-              <a href={generateWhatsAppLink(n.title,n.titleHebrew)} target="_blank" rel="noopener noreferrer"
-                onClick={()=>setSharedIds(prev=>new Set([...prev,n.id]))}
-                style={{ display:"flex",alignItems:"center",justifyContent:"center",gap:7,
-                  background:sharedIds.has(n.id)?"rgba(37,211,102,.16)":"rgba(37,211,102,.07)",
-                  border:`1.5px solid ${sharedIds.has(n.id)?"rgba(37,211,102,.45)":"rgba(37,211,102,.22)"}`,
-                  borderRadius:11,padding:"10px 14px",color:"#128C7E",fontSize:12,fontWeight:700,textDecoration:"none" }}>
-                <span style={{ fontSize:15 }}>💬</span>
-                {sharedIds.has(n.id)?"✓ שותף לקהילת ITS MOMKEN":"שתף עם בוט הקהילה"}
-              </a>
+              </div>
+              
+              <div className="news-body">
+                <button onClick={() => toggleReveal(n.id)} className="btn-show" style={{ width:"100%", padding:8, fontSize:12, marginBottom:12, borderRadius:8 }}>
+                  {revealed.has(n.id) ? "🔼 הסתר תרגום" : "🔽 הצג תוכן ותרגום"}
+                </button>
+
+                {revealed.has(n.id) && (
+                  <div className="fade-up" style={{ marginBottom:15 }}>
+                    <div className="persian" style={{ fontSize:15, lineHeight:1.6, textAlign:"right", marginBottom:10, padding:10, borderRadius:8, background:"rgba(255,255,255,0.05)" }}>
+                       {n.content || n.persian}
+                    </div>
+                    <div className="hebrew" style={{ fontSize:14, lineHeight:1.5, textAlign:"right", color:"rgba(255,255,255,0.8)", borderRight:"3px solid var(--turquoise)", paddingRight:10 }}>
+                       {n.contentHebrew || n.hebrew}
+                    </div>
+                  </div>
+                )}
+
+                {/* חלק המבחן */}
+                {n.quiz && n.quiz.length > 0 && (
+                  <div style={{ marginTop:10, paddingTop:10, borderTop:"1px solid rgba(255,255,255,0.1)" }}>
+                    {!quizState[n.id] ? (
+                      <>
+                        <div style={{ fontSize:12, fontWeight:700, marginBottom:8, color:"var(--turquoise)" }}>🧠 בחן את עצמך:</div>
+                        <div className="hebrew" style={{ fontSize:13, textAlign:"right", marginBottom:8 }}>{n.quiz[0].q}</div>
+                        {n.quiz[0].options.map((opt, j) => (
+                          <button key={j} className="quiz-opt" onClick={() => handleAnswer(n.id, j, n.quiz[0].answer)} style={{ width:"100%", textAlign:"right", marginBottom:5 }}>
+                            {opt}
+                          </button>
+                        ))}
+                      </>
+                    ) : (
+                      <div style={{ textAlign:"center", padding:10, background:quizState[n.id].correct ? "rgba(0,165,145,0.15)" : "rgba(220,50,50,0.15)", borderRadius:8 }}>
+                        {quizState[n.id].correct ? "✅ מעולה! +15 XP" : "❌ לא נכון, נסה שוב!"}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* כפתור שיתוף */}
+                <div style={{ marginTop:12, height:1, background:"rgba(255,255,255,0.1)" }} />
+                <button className="btn-share" style={{ background:"none", border:"none", color:"#25D366", fontSize:12, marginTop:8, cursor:"pointer", width:"100%" }}>
+                   💬 שתף בקהילה
+                </button>
+              </div>
             </div>
-          </div>
-        );
-      })}
+          ))}
+        </div>
+      )}
     </div>
   );
 }
-
 // ── Progress ───────────────────────────────────────────────────
 function Progress({ stats, setStats }) {
   const level   = getLevel(stats.xp);
@@ -938,9 +943,10 @@ const navItems = [
 ];
 
 export default function App() {
+// 1. ניהול העמודים
   const [page, setPage] = useState("dashboard");
 
-  // Persistent stats
+  // 2. שמירה על הניקוד והרצף (Persistent stats)
   const [stats, setStats] = useState(() => {
     try {
       const s = JSON.parse(localStorage.getItem("momken_stats"));
@@ -948,21 +954,21 @@ export default function App() {
     } catch { return { streak:3, words:12, xp:75 }; }
   });
 
-  // AI Word of Day
-  const [wordOfDay,   setWordOfDay]   = useState(null);
+  // 3. הגדרת החדשות והתרבות
+  const [newsItems, setNewsItems] = useState(newsData);
+  const [newsLoading, setNewsLoading] = useState(false);
+  const [newsError, setNewsError] = useState(null);
+  const [cultureCardsState, setCultureCardsState] = useState(cultureData);
+
+  // 4. מילת היום
+  const [wordOfDay, setWordOfDay] = useState(null);
   const [wordLoading, setWordLoading] = useState(true);
-  const [wordError,   setWordError]   = useState(false);
-
-  // AI News
-  const [newsItems,   setNewsItems]   = useState(fallbackNews);
-  const [newsLoading, setNewsLoading] = useState(true);
-  const [newsError,   setNewsError]   = useState(false);
-
+  const [wordError, setWordError] = useState(false);
+  // 5. אפקטים בסיסיים
   useEffect(() => { injectStyles(); }, []);
   useEffect(() => {
     try { localStorage.setItem("momken_stats", JSON.stringify(stats)); } catch {}
   }, [stats]);
-
   const loadWord = useCallback(async () => {
     setWordLoading(true); setWordError(false);
     try {
@@ -978,7 +984,7 @@ export default function App() {
       const items = await fetchAINews();
       if (Array.isArray(items) && items.length > 0) setNewsItems(items);
       else throw new Error("empty");
-    } catch { setNewsItems(fallbackNews); setNewsError(true); }
+    } catch { setNewsItems(newsData); setNewsError(true); }
     finally { setNewsLoading(false); }
   }, []);
 
@@ -988,7 +994,8 @@ export default function App() {
     dashboard: { stats, wordOfDay, wordLoading, wordError, refreshWord: loadWord },
     chat:      { stats, setStats },
     vocab:     { stats, setStats },
-    culture:   {},
+    // כאן היה הנתק - עכשיו חיברנו את המידע למסך
+    culture:   { cultureCards: cultureCardsState }, 
     news:      { stats, setStats, newsItems, newsLoading, newsError, refreshNews: loadNews },
     progress:  { stats, setStats },
   };
