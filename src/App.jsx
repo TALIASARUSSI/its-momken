@@ -1,3 +1,4 @@
+import { vocabulary } from './data/vocabulary';
 import { useState, useEffect, useRef, useCallback } from "react";
 
 // ============================================================
@@ -98,30 +99,7 @@ CORRECTION: [Hebrew grammar note or "none"]
 // STATIC DATA
 // ============================================================
 
-const vocabulary = [
-  { id: 1,  persian: "سلام",     transliteration: "Salam",      hebrew: "שלום",              category: "ברכות",    xp: 10 },
-  { id: 2,  persian: "ممنون",    transliteration: "Mamnoon",     hebrew: "תודה",              category: "ברכות",    xp: 10 },
-  { id: 3,  persian: "خداحافظ", transliteration: "Khodahafez",  hebrew: "להתראות",           category: "ברכות",    xp: 10 },
-  { id: 4,  persian: "لطفاً",   transliteration: "Lotfan",      hebrew: "בבקשה",             category: "ברכות",    xp: 10 },
-  { id: 5,  persian: "بله",      transliteration: "Bale",        hebrew: "כן",                category: "בסיסי",    xp: 5  },
-  { id: 6,  persian: "نه",       transliteration: "Na",          hebrew: "לא",                category: "בסיסי",    xp: 5  },
-  { id: 7,  persian: "آب",       transliteration: "Ab",          hebrew: "מים",               category: "אוכל",     xp: 8  },
-  { id: 8,  persian: "نان",      transliteration: "Nan",         hebrew: "לחם",               category: "אוכל",     xp: 8  },
-  { id: 9,  persian: "چای",      transliteration: "Chai",        hebrew: "תה",                category: "אוכל",     xp: 8  },
-  { id: 10, persian: "بازار",    transliteration: "Bazaar",      hebrew: "שוק",               category: "מקומות",   xp: 12 },
-  { id: 11, persian: "خانه",     transliteration: "Khaneh",      hebrew: "בית",               category: "מקומות",   xp: 8  },
-  { id: 12, persian: "کتاب",     transliteration: "Ketab",       hebrew: "ספר",               category: "חפצים",    xp: 8  },
-  { id: 13, persian: "زمان",     transliteration: "Zaman",       hebrew: "זמן — אותו שורש!",  category: "קוגנאטים", xp: 15 },
-  { id: 14, persian: "دنیا",     transliteration: "Donya",       hebrew: "דוניה — עולם",      category: "קוגנאטים", xp: 15 },
-  { id: 15, persian: "امتحان",   transliteration: "Emtehan",     hebrew: "מבחן",              category: "קוגנאטים", xp: 15 },
-  { id: 16, persian: "قلم",      transliteration: "Ghalam",      hebrew: "קולמוס — עט",       category: "קוגנאטים", xp: 15 },
-  { id: 17, persian: "مشکل",     transliteration: "Moshkel",     hebrew: "בעיה",              category: "קוגנאטים", xp: 15 },
-  { id: 18, persian: "صبر",      transliteration: "Sabr",        hebrew: "סבלנות",            category: "קוגנאטים", xp: 15 },
-  { id: 19, persian: "اجازه",    transliteration: "Ejaze",       hebrew: "רשות",              category: "קוגנאטים", xp: 15 },
-  { id: 20, persian: "حساب",     transliteration: "Hesab",       hebrew: "חשבון",             category: "קוגנאטים", xp: 15 },
-  { id: 21, persian: "دکتر",     transliteration: "Doktor",      hebrew: "דוקטור",            category: "קוגנאטים", xp: 15 },
-  { id: 22, persian: "خبر",      transliteration: "Khabar",      hebrew: "חדשות",             category: "קוגנאטים", xp: 15 },
-];
+
 
 const slangMap = {
   "می‌خواهید": "می‌خواین", "می‌خواهم": "می‌خوام",
