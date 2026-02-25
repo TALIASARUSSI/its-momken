@@ -8,19 +8,22 @@ import { useState, useEffect, useRef, useCallback } from "react";
 // ============================================================
 
 async function callGemini(prompt, jsonMode = true) {
-  const WORKER_URL = "https://orange-paper-8280gemini-proxy.ykhv-xruxh.workers.dev/";
+  // Cloudflare Worker proxy URL (no trailing slash needed)
+  const WORKER_URL = "https://orange-paper-8280gemini-proxy.ykhv-xruxh.workers.dev";
 
   try {
+    const geminiPayload = {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: jsonMode ? 2048 : 1024,
+      },
+    };
+
     const res = await fetch(WORKER_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { 
-          temperature: 0.7, 
-          maxOutputTokens: jsonMode ? 2048 : 1024 
-        },
-      }),
+      body: JSON.stringify(geminiPayload),
     });
 
     if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
