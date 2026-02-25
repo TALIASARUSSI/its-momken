@@ -63,35 +63,43 @@ Return ONLY valid JSON:
 async function fetchTutorReply(history, userMessage, mode) {
   const historyText = history
     .slice(-6)
-    .map(m => `${m.role === "user" ? "Student" : "Tutor"}: ${m.persian || m.content}`)
+    .map(m => `${m.role === "user" ? "Student" : "Tutor"}: ${m.persian || m.content || ""}`)
     .join("\n");
 
   const prompt = `
-You are a Persian tutor named Dariush. Mode: ${mode}.
-Conversation:
-${historyText}
-Student: ${userMessage}
-Respond in this format:
+You are a warm, encouraging Persian language tutor for Hebrew speakers. Your name is Dariush (داریوش).
+Mode: ${mode === "slang" ? "Colloquial/spoken Persian" : "Formal literary Persian"}.
+Rules: Respond in the exact format:
 FA: [Persian reply]
 TR: [transliteration]
 HE: [Hebrew translation]
 CORRECTION: [Hebrew grammar note or "none"]
-`;
-  return callGemini(prompt, false); // כאן jsonMode הוא false כי הפורמט הוא טקסט חופשי
-}
-  const raw = await callGemini(prompt, false);
-  if (!raw) return null;
-  const get = (prefix) => {
-    const m = raw.match(new RegExp(`${prefix}:\\s*(.+?)(?=\\n[A-Z]+:|$)`, "s"));
-    return m ? m[1].trim() : "";
-  };
-  return {
-    persian:         get("FA"),
-    transliteration: get("TR"),
-    hebrew:          get("HE"),
-    correction:      get("CORRECTION").toLowerCase() === "none" ? null : get("CORRECTION"),
-  };
 
+Conversation:
+${historyText}
+Student: ${userMessage}
+`;
+
+  try {
+    const raw = await callGemini(prompt, false);
+    if (!raw) return null;
+
+    const get = (prefix) => {
+      const m = raw.match(new RegExp(`${prefix}:\\s*(.+?)(?=\\n[A-Z]+:|$)`, "s"));
+      return m ? m[1].trim() : "";
+    };
+
+    return {
+      persian: get("FA"),
+      transliteration: get("TR"),
+      hebrew: get("HE"),
+      correction: get("CORRECTION")
+    };
+  } catch (err) {
+    console.error("fetchTutorReply error:", err);
+    return null;
+  }
+}
 
 // ============================================================
 // STATIC DATA
