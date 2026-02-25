@@ -4,67 +4,159 @@ import { cultureData } from './data/culture';
 import { useState, useEffect, useRef, useCallback } from "react";
 
 // ============================================================
-// GEMINI AI SERVICE
+// CACHE HELPERS (30 min TTL)
 // ============================================================
 
-async function callGemini(prompt, jsonMode = true) {
-  // Cloudflare Worker proxy URL (no trailing slash needed)
-  const WORKER_URL = "https://orange-paper-8280gemini-proxy.ykhv-xruxh.workers.dev";
+const CACHE_TTL_MS = 30 * 60 * 1000;
+const CACHE_KEY_NEWS = "momken_news_cache";
+const CACHE_KEY_CULTURE = "momken_culture_cache";
+
+function getCached(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const { data, ts } = JSON.parse(raw);
+    if (!data || !ts || Date.now() - ts > CACHE_TTL_MS) return null;
+    return data;
+  } catch { return null; }
+}
+
+function setCached(key, data) {
+  try {
+    localStorage.setItem(key, JSON.stringify({ data, ts: Date.now() }));
+  } catch {}
+}
+
+// ============================================================
+// AI SERVICE (OpenAI via Cloudflare Worker)
+// ============================================================
+
+async function askAI(prompt, jsonMode = true) {
+  const WORKER_URL = import.meta.env.VITE_OPENAI_WORKER_URL;
+  if (!WORKER_URL || typeof WORKER_URL !== "string" || !WORKER_URL.trim()) {
+    console.error("Missing or empty VITE_OPENAI_WORKER_URL in environment");
+    return null;
+  }
 
   try {
-    const geminiPayload = {
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: jsonMode ? 2048 : 1024,
-      },
-    };
-
     const res = await fetch(WORKER_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(geminiPayload),
+      body: JSON.stringify({
+        prompt,
+        jsonMode,
+        temperature: 0.7,
+        maxOutputTokens: jsonMode ? 4096 : 2048,
+      }),
     });
 
-    if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
-
-    const data = await res.json();
-    
-    // שליפת הטקסט מתוך המבנה של Gemini
-    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    
-    if (!rawText) {
-      console.error("Gemini returned empty text");
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      console.error("OpenAI Worker HTTP Error:", res.status, data);
       return null;
     }
 
-    if (!jsonMode) return rawText.trim();
+    const rawText = data?.text;
 
-    // ניקוי סימני Markdown (לפעמים ג'מיני מוסיף ```json)
+    if (rawText === undefined || rawText === null) {
+      console.error("OpenAI Worker returned empty text", data);
+      return null;
+    }
+
+    if (!jsonMode) {
+      return typeof rawText === "string" ? rawText.trim() : rawText;
+    }
+
+    // jsonMode: if worker already parsed JSON, just return it
+    if (typeof rawText !== "string") {
+      return rawText;
+    }
+
     const cleanJson = rawText.replace(/```json|```/g, "").trim();
-    return JSON.parse(cleanJson);
-
+    try {
+      return JSON.parse(cleanJson);
+    } catch (e) {
+      console.error("askAI JSON parse failed. Cleaned text was:", cleanJson, "error:", e);
+      return null;
+    }
   } catch (error) {
-    console.error("Critical Gemini Error:", error);
+    console.error("Critical OpenAI Worker Error:", error);
     return null;
   }
 }
 
 async function fetchAINews() {
-  const prompt = `Generate 5 news items about Iran in Hebrew/Persian. Return ONLY a valid JSON array.`;
-  return callGemini(prompt, true);
+  const prompt = `Return ONLY a valid JSON array of 3 news items about Iran. Each item: {"id":1,"textFA":"2 sentences in Persian","transliteration":"Latin","textHE":"Hebrew translation","quiz":{"question":"Hebrew?","options":["a","b","c","d"],"correctIndex":0}}. No markdown, no comments.`;
+
+  const raw = await askAI(prompt, false);
+  if (!raw) {
+    console.error("fetchAINews: askAI returned null/empty");
+    return null;
+  }
+
+  console.log("Raw AI news response:", raw);
+
+  try {
+    const asString = typeof raw === "string" ? raw : JSON.stringify(raw);
+    const clean = asString.replace(/```json|```/g, "").trim();
+    const parsed = JSON.parse(clean);
+
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+    if (parsed && typeof parsed === "object") {
+      return [parsed];
+    }
+
+    console.error("fetchAINews: parsed JSON was neither array nor object", parsed);
+    return [];
+  } catch (err) {
+    console.error("Failed to parse AI news JSON:", err, "raw text:", raw);
+    return [];
+  }
 }
 
 async function fetchWordOfDay() {
   const prompt = `Generate one interesting Persian word of the day for Hebrew speakers. Return ONLY valid JSON: {"persian":"...","transliteration":"...","hebrew":"...","example":"...","exampleHe":"...","grammarNote":"..."}`;
-  return callGemini(prompt, true);
+  return askAI(prompt, true);
+}
+
+async function fetchCultureData() {
+  const prompt = `Return ONLY a valid JSON array of 4 culture cards about Iran. Each: {"id":1,"emoji":"☕","title":"Hebrew","titlePersian":"فارسی","textFA":"2 sentences Persian","transliteration":"Latin","textHE":"Hebrew"}. No markdown.`;
+
+  const raw = await askAI(prompt, false);
+  if (!raw) {
+    console.error("fetchCultureData: askAI returned null/empty");
+    return null;
+  }
+
+  console.log("Raw AI culture response:", raw);
+
+  try {
+    const asString = typeof raw === "string" ? raw : JSON.stringify(raw);
+    const clean = asString.replace(/```json|```/g, "").trim();
+    const parsed = JSON.parse(clean);
+
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+    if (parsed && typeof parsed === "object") {
+      return [parsed];
+    }
+
+    console.error("fetchCultureData: parsed JSON was neither array nor object", parsed);
+    return [];
+  } catch (err) {
+    console.error("Failed to parse culture JSON:", err, "raw text:", raw);
+    return [];
+  }
 }
 
 async function fetchTutorReply(history, userMessage, mode) {
   const historyText = history.slice(-5).map(m => `${m.role}: ${m.content}`).join("\n");
   const prompt = `You are a Persian tutor. Reply to: ${userMessage}. Format: FA: [Persian] TR: [Transliteration] HE: [Hebrew] CORRECTION: [Note]`;
   
-  const raw = await callGemini(prompt, false);
+  const raw = await askAI(prompt, false);
   if (!raw) return null;
 
   const get = (prefix) => {
@@ -109,8 +201,6 @@ const fallbackWordOfDay = {
   example: "من دلتنگ ایران هستم", exampleHe: "אני מתגעגע לאיראן",
   grammarNote: "المילה 'دلتنگی' מורכבת מ-دل (לב) ו-تنگی (צרות) — לב צר מגעגועים. ביטוי מטאפורי יפהפה.",
 };
-
-const cultureCards = cultureData;
 
 const scenarios = [
   { id:"bazaar",     label:"🛍️ בזאר",        labelPersian:"بازار"    },
@@ -162,20 +252,28 @@ function getLevel(xp) {
 const injectStyles = () => {
   if (document.getElementById("momken-styles")) return;
   const css = `
-    @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&family=Heebo:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,700;1,500&display=swap');
-    :root{--turquoise:#00A591;--saffron:#F4C430;--indigo:#1F2A44;--charcoal:#2E2E2E;--sand:#F6F1E9;}
+    @import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700&family=Heebo:wght@300;400;500;600;700&family=Exo+2:wght@300;400;500;600;700&family=Sora:wght@600;700&display=swap');
+    :root{
+      --turquoise:#00A591;
+      --saffron:#F7D36B;      /* lighter, sunflower-gold */
+      --indigo:#1F2A44;
+      --charcoal:#2E2E2E;
+      --sand:#F6F1E9;
+      --mint:#B8EFC7;         /* light pastel green */
+    }
     *{box-sizing:border-box;margin:0;padding:0;}
-    body{font-family:'Heebo',sans-serif;background:var(--sand);color:var(--charcoal);overscroll-behavior:none;-webkit-font-smoothing:antialiased;}
+    body{font-family:'Exo 2','Heebo',sans-serif;background:var(--sand);color:var(--charcoal);overscroll-behavior:none;-webkit-font-smoothing:antialiased;}
     .persian{font-family:'Vazirmatn',sans-serif;direction:rtl;}
     .hebrew{font-family:'Heebo',sans-serif;direction:rtl;}
     .app-shell{max-width:430px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column;position:relative;overflow:hidden;background:var(--sand);}
     .app-shell::before{content:'';position:fixed;top:0;left:0;right:0;bottom:0;background-image:radial-gradient(circle at 20% 20%,rgba(0,165,145,.05) 0%,transparent 50%),radial-gradient(circle at 80% 80%,rgba(244,196,48,.05) 0%,transparent 50%);pointer-events:none;z-index:0;}
     .header{background:var(--indigo);padding:14px 18px 12px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;box-shadow:0 2px 20px rgba(31,42,68,.35);}
-    .header-logo{font-family:'Playfair Display',serif;font-size:20px;font-weight:700;color:var(--saffron);letter-spacing:-.5px;}
-    .header-logo span{color:var(--turquoise);}
+    .header-logo{display:flex;flex-direction:column;gap:2px;align-items:flex-start;}
+    .header-logo img{height:50px;width:auto;display:block;}
+    .header-tagline{font-family:'Exo 2','Heebo',sans-serif;font-size:10px;font-weight:500;color:rgba(255,255,255,.65);letter-spacing:.5px;}
     .header-badge{display:flex;align-items:center;gap:5px;padding:5px 11px;border-radius:20px;font-family:'Heebo',sans-serif;font-size:13px;font-weight:700;cursor:pointer;border:none;transition:all .2s;}
-    .hb-fire{background:rgba(244,196,48,.15);border:1px solid rgba(244,196,48,.3);color:var(--saffron);}
-    .hb-xp{background:rgba(0,165,145,.15);border:1px solid rgba(0,165,145,.3);color:var(--turquoise);}
+    .hb-fire{background:rgba(247,211,107,.18);border:1px solid rgba(247,211,107,.4);color:var(--saffron);}
+    .hb-xp{background:rgba(184,239,199,.28);border:1px solid rgba(184,239,199,.6);color:var(--turquoise);}
     .content{flex:1;overflow-y:auto;padding:18px 15px 88px;position:relative;z-index:1;}
     .bottom-nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;background:var(--indigo);display:flex;justify-content:space-around;padding:9px 0 15px;z-index:100;box-shadow:0 -2px 20px rgba(31,42,68,.3);}
     .nav-item{display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;padding:4px 10px;border-radius:12px;transition:all .2s;color:rgba(255,255,255,.35);font-family:'Heebo',sans-serif;font-size:10px;font-weight:500;border:none;background:none;}
@@ -191,15 +289,16 @@ const injectStyles = () => {
     .badge-saffron{background:rgba(244,196,48,.2);color:#b88e10;}
     .badge-indigo{background:rgba(31,42,68,.1);color:var(--indigo);}
     .btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:11px 18px;border-radius:13px;font-family:'Heebo',sans-serif;font-size:14px;font-weight:700;cursor:pointer;border:none;transition:all .2s;width:100%;}
-    .btn-primary{background:var(--turquoise);color:white;}
-    .btn-primary:hover{background:#008a78;transform:translateY(-1px);}
-    .btn-outline{background:transparent;border:2px solid var(--turquoise);color:var(--turquoise);}
+    .btn-primary{background:linear-gradient(135deg,var(--turquoise),var(--mint));color:white;box-shadow:0 4px 10px rgba(0,165,145,.28);}
+    .btn-primary:hover{background:linear-gradient(135deg,var(--mint),var(--turquoise));transform:translateY(-1px);}
+    .btn-outline{background:transparent;border:2px solid var(--mint);color:var(--indigo);}
     .btn-show{background:rgba(31,42,68,.06);color:var(--indigo);border:1.5px dashed rgba(31,42,68,.2);}
-    .section-title{font-family:'Playfair Display',serif;font-size:19px;font-weight:700;color:var(--indigo);margin-bottom:14px;display:flex;align-items:center;gap:8px;}
+    .section-title{font-family:'Sora','Exo 2',sans-serif;font-size:19px;font-weight:700;color:var(--indigo);margin-bottom:14px;display:flex;align-items:center;gap:8px;}
+    h1,h2,h3{font-family:'Sora','Exo 2',sans-serif;font-weight:700;}
     .motiv-text{font-family:'Playfair Display',serif;font-style:italic;font-size:12px;color:var(--turquoise);}
     .stats-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px;margin-bottom:14px;}
     .stat-card{background:white;border-radius:16px;padding:13px 8px;text-align:center;box-shadow:0 2px 8px rgba(31,42,68,.07);}
-    .stat-val{font-family:'Playfair Display',serif;font-size:26px;font-weight:700;color:var(--indigo);line-height:1;}
+    .stat-val{font-family:'Titan One','Exo 2',cursive;font-size:26px;font-weight:700;color:var(--indigo);line-height:1;}
     .stat-label{font-family:'Heebo',sans-serif;font-size:9px;color:rgba(0,0,0,.38);margin-top:4px;text-transform:uppercase;letter-spacing:.6px;}
     .flashcard-wrapper{perspective:1000px;height:210px;cursor:pointer;margin-bottom:14px;}
     .flashcard-inner{width:100%;height:100%;position:relative;transform-style:preserve-3d;transition:transform .55s cubic-bezier(.4,0,.2,1);}
@@ -229,6 +328,10 @@ const injectStyles = () => {
     .key-btn:active{transform:scale(.88);}
     .key-btn-unique{background:rgba(244,196,48,.14);border-color:rgba(244,196,48,.5);color:#9a7208;font-weight:700;}
     .key-btn-unique:hover{background:var(--saffron);color:white;border-color:var(--saffron);}
+    .key-row-extra{display:flex;gap:6px;margin-top:8px;justify-content:space-between;}
+    .key-btn-wide{flex:1;padding:9px 16px;}
+    .key-btn-special{background:rgba(220,50,50,.04);border-color:rgba(220,50,50,.35);color:#dc3232;font-weight:700;}
+    .key-btn-special:hover{background:rgba(220,50,50,.1);border-color:#dc3232;color:#dc3232;}
     .chip{display:inline-flex;align-items:center;gap:5px;padding:7px 13px;border-radius:20px;border:2px solid rgba(0,165,145,.2);font-family:'Heebo',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:all .2s;background:white;color:var(--charcoal);white-space:nowrap;}
     .chip.active,.chip:hover{background:var(--turquoise);color:white;border-color:var(--turquoise);}
     .chips-wrap{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px;}
@@ -384,8 +487,8 @@ function Dashboard({ stats, wordOfDay, wordLoading, wordError, refreshWord }) {
   return (
     <div>
       <div className="card card-indigo fade-up" style={{ textAlign:"center", padding:"26px 18px", marginBottom:14 }}>
-        <div style={{ fontSize:10, letterSpacing:2, textTransform:"uppercase", opacity:.45, marginBottom:7 }}>ברוך הבא ל</div>
-        <div style={{ fontFamily:"'Playfair Display',serif", fontSize:26, fontWeight:700, color:"#F4C430", marginBottom:4 }}>
+        <div style={{ fontSize:10, letterSpacing:2, textTransform:"uppercase", opacity:.45, marginBottom:7, fontFamily:"'Exo 2', 'Heebo', sans-serif" }}>ברוכים הבאים ל-ITS MOMKEN</div>
+        <div style={{ fontFamily:"'Titan One', cursive", fontSize:26, fontWeight:700, color:"#F4C430", marginBottom:4 }}>
           ITS <span style={{ color:"#00A591" }}>MOMKEN</span>
         </div>
         <div style={{ fontSize:12, opacity:.55, fontStyle:"italic" }}>ללמוד פרסית? ITS MOMKEN.</div>
@@ -401,7 +504,7 @@ function Dashboard({ stats, wordOfDay, wordLoading, wordError, refreshWord }) {
         <div className="stat-card"><div className="stat-val" style={{ color:"#b88e10" }}>{stats.xp}</div><div className="stat-label">XP</div></div>
       </div>
       <div className="card fade-up-2">
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:7 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:7, fontFamily:"'Exo 2', 'Heebo', sans-serif" }}>
           <span style={{ fontSize:13, fontWeight:700 }}>התקדמות היומית</span>
           <span className="badge badge-turquoise">{Math.round(percent)}%</span>
         </div>
@@ -411,7 +514,7 @@ function Dashboard({ stats, wordOfDay, wordLoading, wordError, refreshWord }) {
 
       {/* AI Word of the Day */}
       <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:14 }}>
-        <div className="section-title" style={{ marginBottom:0 }}>✨ מילה היום</div>
+        <div className="section-title" style={{ marginBottom:0 }}>✨ מילת היום</div>
         <span className="ai-badge">✦ Gemini AI</span>
       </div>
       {wordLoading && <LoadingCard lines={3} label="Gemini מייצר מילת יום..." />}
@@ -472,10 +575,38 @@ function Chat({ stats, setStats }) {
   const bottomRef = useRef();
 
   const persianKeys = [
-    {char:"ا"},{char:"ب"},{char:"پ",unique:true},{char:"ت"},
-    {char:"ث"},{char:"ج"},{char:"چ",unique:true},{char:"ح"},
-    {char:"خ"},{char:"د"},{char:"ذ"},{char:"ر"},
-    {char:"ز"},{char:"ژ",unique:true},{char:"س"},{char:"ش"},
+    {char:"ا"},
+    {char:"ب"},
+    {char:"پ",unique:true},
+    {char:"ت"},
+    {char:"ث"},
+    {char:"ج"},
+    {char:"چ",unique:true},
+    {char:"ح"},
+    {char:"خ"},
+    {char:"د"},
+    {char:"ذ"},
+    {char:"ر"},
+    {char:"ز"},
+    {char:"ژ",unique:true},
+    {char:"س"},
+    {char:"ش"},
+    {char:"ص"},
+    {char:"ض"},
+    {char:"ط"},
+    {char:"ظ"},
+    {char:"ع"},
+    {char:"غ"},
+    {char:"ف"},
+    {char:"ق"},
+    {char:"ک"},
+    {char:"گ",unique:true},
+    {char:"ل"},
+    {char:"م"},
+    {char:"ن"},
+    {char:"و"},
+    {char:"ه"},
+    {char:"ی"},
   ];
 
   // Load scenario opener
@@ -511,7 +642,7 @@ function Chat({ stats, setStats }) {
       }]);
       setStats(s => ({ ...s, xp: s.xp + 5 }));
       if (reply.correction) {
-        setGrammarNote({ title:"✏️ תיקון — Dariush מסביר", body:reply.correction });
+        setGrammarNote({ title:"✏️ תיקון — Parviz מסביר", body:reply.correction });
       }
     } catch (e) {
       console.error(e);
@@ -531,8 +662,8 @@ function Chat({ stats, setStats }) {
   return (
     <div>
       <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:14 }}>
-        <div className="section-title" style={{ marginBottom:0 }}>💬 מורה AI — داریوش</div>
-        <span className="ai-badge">✦ Gemini</span>
+        <div className="section-title" style={{ marginBottom:0 }}>💬 מורה AI — פרویز (Parviz)</div>
+        <span className="ai-badge">✦ Parviz AI</span>
       </div>
 
       <div className="toggle-container">
@@ -552,7 +683,7 @@ function Chat({ stats, setStats }) {
       </div>
 
       <div style={{ background:"rgba(0,165,145,.06)",border:"1px solid rgba(0,165,145,.15)",borderRadius:12,padding:"9px 13px",marginBottom:14,fontSize:12,color:"var(--turquoise)",fontWeight:600,direction:"rtl",textAlign:"right" }}>
-        🎭 תרחיש: {scenarios.find(s=>s.id===scenario)?.label} — כתוב בפרסית ו-Dariush יתקן ויסביר
+        🎭 תרחיש: {scenarios.find(s=>s.id===scenario)?.label} — כתוב בפרסית ו-Parviz יתקן ויסביר
       </div>
 
       {/* Messages */}
@@ -605,7 +736,7 @@ function Chat({ stats, setStats }) {
 
       <div className="chat-input-area">
         <input className="chat-input persian" style={{ direction:"rtl",textAlign:"right" }}
-          placeholder="כתוב פרסית לדריוש..."
+          placeholder="כתוב פרסית לפרויז..."
           value={input}
           onChange={e=>setInput(e.target.value)}
           onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&sendMessage()}
@@ -628,6 +759,36 @@ function Chat({ stats, setStats }) {
               {k.char}
             </button>
           ))}
+        </div>
+        <div className="key-row-extra">
+          <button
+            className="key-btn key-btn-special"
+            type="button"
+            onClick={() => setInput(i => i.slice(0, -1))}
+          >
+            ⌫ מחק
+          </button>
+          <button
+            className="key-btn"
+            type="button"
+            onClick={() => setInput(i => i + "،")}
+          >
+            ،
+          </button>
+          <button
+            className="key-btn"
+            type="button"
+            onClick={() => setInput(i => i + ".")}
+          >
+            .
+          </button>
+          <button
+            className="key-btn key-btn-wide"
+            type="button"
+            onClick={() => setInput(i => i + " ")}
+          >
+            רווח
+          </button>
         </div>
       </div>
     </div>
@@ -657,8 +818,8 @@ function Vocabulary({ stats, setStats }) {
     <div>
       <div className="section-title">📖 מעבדת מילים</div>
       <div className="toggle-container">
-        <button className={`toggle-option ${view==="grid" ?"active":""}`} onClick={()=>setView("grid")}>🔲 גריד</button>
-        <button className={`toggle-option ${view==="flash"?"active":""}`} onClick={()=>setView("flash")}>🃏 פלאשכרטות</button>
+        <button className={`toggle-option ${view==="grid" ?"active":""}`} onClick={()=>setView("grid")}>🔲 לוח</button>
+        <button className={`toggle-option ${view==="flash"?"active":""}`} onClick={()=>setView("flash")}>🃏 כרטיסיות</button>
       </div>
       {view==="flash" && (
         <>
@@ -706,17 +867,41 @@ function Vocabulary({ stats, setStats }) {
 }
 
 // ── Culture ────────────────────────────────────────────────────
-function Culture({ cultureCards }) {
+function Culture({ cultureCards, cultureLoading, refreshCulture }) {
   const [expanded, setExpanded] = useState(null);
+  const [revealedHe, setRevealedHe] = useState(new Set());
+
+  const toggleHe = (id) => {
+    setRevealedHe(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
   return (
     <div>
-      <div className="section-title">🕌 מרכז תרבות</div>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+        <div className="section-title" style={{ marginBottom:0 }}>🕌 מרכז תרבות</div>
+        {refreshCulture && (
+          <button className="audio-btn" style={{ fontSize:11 }} onClick={refreshCulture}>
+            🔄 רענן
+          </button>
+        )}
+      </div>
       <div className="card" style={{ background:"linear-gradient(135deg,var(--saffron),#e8b020)",marginBottom:14,textAlign:"center" }}>
         <div style={{ fontSize:10,letterSpacing:2,textTransform:"uppercase",color:"rgba(0,0,0,.45)",marginBottom:5 }}>CULTURE HUB</div>
         <div style={{ fontFamily:"'Playfair Display',serif",fontSize:17,fontWeight:700,color:"var(--indigo)" }}>הבן את איראן מהצד השני</div>
         <div style={{ fontSize:12,color:"rgba(0,0,0,.45)",marginTop:3,fontStyle:"italic" }}>Cultural literacy? ITS MOMKEN.</div>
       </div>
-      {cultureCards.map((card,i) => (
+      {cultureLoading ? (
+        <div className="card" style={{ textAlign:"center", padding:32 }}>
+          <div className="spinner" style={{ margin:"0 auto 12px" }} />
+          <div className="persian" style={{ fontSize:14, fontWeight:600, marginBottom:6 }}>در حال آماده‌سازی محتوای فرهنگی...</div>
+          <div className="hebrew" style={{ fontSize:13, color:"var(--turquoise)" }}>מכין לך את התוכן התרבותי...</div>
+        </div>
+      ) : (
+      cultureCards.map((card,i) => (
         <div key={card.id} className="card fade-up" style={{ animationDelay:`${i*.05}s` }}>
           <div style={{ display:"flex",alignItems:"flex-start",gap:12,cursor:"pointer" }} onClick={()=>setExpanded(expanded===card.id?null:card.id)}>
             <div style={{ width:48,height:48,borderRadius:15,background:"rgba(0,165,145,.09)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0 }}>{card.emoji}</div>
@@ -728,127 +913,166 @@ function Culture({ cultureCards }) {
           </div>
           {expanded===card.id && (
             <div style={{ marginTop:14,paddingTop:14,borderTop:"1px solid rgba(0,0,0,.06)" }}>
-              <div style={{ display:"flex",justifyContent:"flex-end",marginBottom:7 }}><AudioButton text={card.persian} /></div>
-              <div className="persian" style={{ fontSize:15,fontWeight:500,direction:"rtl",textAlign:"right",lineHeight:1.8,marginBottom:9 }}>{card.persian}</div>
-              <div style={{ fontSize:12,fontStyle:"italic",color:"rgba(0,0,0,.38)",marginBottom:7 }}>{card.transliteration}</div>
-              <div style={{ height:1,background:"rgba(0,165,145,.13)",margin:"9px 0" }} />
-              <div className="hebrew" style={{ fontSize:13,direction:"rtl",textAlign:"right",color:"var(--indigo)",fontWeight:500,lineHeight:1.7 }}>{card.hebrew}</div>
+              <div style={{ display:"flex",justifyContent:"flex-end",marginBottom:7 }}><AudioButton text={card.textFA || card.persian} /></div>
+              <div className="persian" style={{ fontSize:15,fontWeight:500,direction:"rtl",textAlign:"right",lineHeight:1.8,marginBottom:9 }}>{card.textFA || card.persian}</div>
+              <div style={{ fontSize:12,fontStyle:"italic",color:"rgba(0,0,0,.38)",marginBottom:10 }}>{card.transliteration}</div>
+              <button
+                className="btn-show"
+                style={{ width:"100%", padding:8, fontSize:12, borderRadius:8, marginBottom: revealedHe.has(card.id) ? 10 : 0 }}
+                onClick={(e) => { e.stopPropagation(); toggleHe(card.id); }}
+              >
+                {revealedHe.has(card.id) ? "🔼 הסתר תרגום לעברית" : "🔽 הצג תרגום לעברית"}
+              </button>
+              {revealedHe.has(card.id) && (
+                <div className="hebrew" style={{ fontSize:13,direction:"rtl",textAlign:"right",color:"var(--indigo)",fontWeight:500,lineHeight:1.7,marginTop:8 }}>
+                  {card.textHE || card.hebrew}
+                </div>
+              )}
             </div>
           )}
         </div>
-      ))}
+      )))}
     </div>
   );
 }
 
 // ── News (AI-powered) ──────────────────────────────────────────
 function News({ stats, setStats, newsItems, newsLoading, newsError, refreshNews }) {
+  const [revealedHe, setRevealedHe] = useState(new Set());
   const [quizState, setQuizState] = useState({});
-  const [sharedIds, setSharedIds] = useState(new Set());
-  const [revealed,  setRevealed]  = useState(new Set());
 
-  const toggleReveal = id => setRevealed(prev => {
-    const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
-  });
-  const handleAnswer = (nid, j, ans) => {
-    if (quizState[nid]) return;
-    const correct = j === ans;
-    setQuizState(s => ({ ...s, [nid]:{ selected:j, correct } }));
-   if (correct) setStats(s => ({ ...s, xp: s.xp + 15, words: s.words + 1 }));
+  const toggleHe = (id) => {
+    setRevealedHe(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
   };
-function News({ stats, setStats, newsItems, newsLoading, newsError, refreshNews }) {
-  // תוודאי ששלוש השורות האלו נמצאות כאן:
-  const [quizState, setQuizState] = useState({});
-  const [sharedIds, setSharedIds] = useState(new Set());
-  const [revealed, setRevealed] = useState(new Set());
 
-  // וגם הפונקציות האלו שמופעלות בלחיצה על כפתורים:
-  const toggleReveal = id => setRevealed(prev => {
-    const n = new Set(prev); 
-    n.has(id) ? n.delete(id) : n.add(id); 
-    return n;
-  });
-
-  const handleAnswer = (id, idx, correct) => {
+  const handleAnswer = (id, idx, correctIndex) => {
     if (quizState[id]) return;
-    const isCorrect = idx === correct;
-    setQuizState(prev => ({ ...prev, [id]: { correct: isCorrect } }));
-    if (isCorrect) setStats(prev => ({ ...prev, xp: prev.xp + 15, words: prev.words + 1 }));
+    const isCorrect = idx === correctIndex;
+    setQuizState(prev => ({ ...prev, [id]: { correct: isCorrect, selected: idx } }));
+    if (isCorrect) {
+      setStats(prev => ({ ...prev, xp: prev.xp + 15, words: prev.words + 1 }));
+    }
   };
-}
-  // כאן מתחיל ה-return שלך..
-  
- return (
+
+  return (
     <div className="fade-up">
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
         <div className="section-title" style={{ margin:0 }}>
-          <span className="ai-badge">✨ Gemini AI</span> חדשות היום
+          <span className="ai-badge">✨ AI News</span> חדשות היום
         </div>
         <button onClick={refreshNews} className="audio-btn" style={{ marginLeft:"auto" }}>🔄 רענן</button>
       </div>
 
       {newsLoading ? (
-        <div style={{ textAlign:"center", padding:40 }}><div className="spinner"></div></div>
+        <div className="card" style={{ textAlign:"center", padding:32 }}>
+          <div className="spinner" style={{ margin:"0 auto 12px" }} />
+          <div className="persian" style={{ fontSize:14, fontWeight:600, marginBottom:6 }}>در حال آماده‌سازی آخرین اخبار...</div>
+          <div className="hebrew" style={{ fontSize:13, color:"var(--turquoise)" }}>מכין לך את החדשות האחרונות...</div>
+        </div>
       ) : newsError ? (
-        <div className="card" style={{ color:"#dc3232", textAlign:"center" }}>{newsError}</div>
+        <div className="card" style={{ color:"#dc3232", textAlign:"center" }}>לא הצלחנו לטעון חדשות חיות, מציג נתונים סטטיים.</div>
       ) : (
         <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-          {newsItems.map((n) => (
-            <div key={n.id} className="news-card fade-up">
-              <div className="news-header">
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"start", gap:10 }}>
-                  <div style={{ flex:1 }}>
-                    <div className="persian" style={{ color:"var(--saffron)", fontSize:16, fontWeight:600, lineHeight:1.4, textAlign:"right" }}>{n.title}</div>
-                    <div className="hebrew" style={{ color:"rgba(255,255,255,0.7)", fontSize:12, marginTop:4, textAlign:"right" }}>{n.titleHebrew}</div>
+          {newsItems.map((n, idx) => {
+            const id = n.id ?? idx + 1;
+            const persian = n.textFA || n.persian || n.paragraphFa || n.content || "";
+            const transliteration = n.transliteration || "";
+            const hebrew = n.textHE || n.hebrew || n.translationHe || n.contentHebrew || "";
+            const quizQuestion = n.quiz?.question || n.quizQuestion || n.quiz?.[0]?.q;
+            const quizOptions = n.quiz?.options || n.quizOptions || n.quiz?.[0]?.options;
+            let correctIndex;
+
+            if (Array.isArray(quizOptions)) {
+              if (typeof n.quiz?.correctIndex === "number") {
+                correctIndex = n.quiz.correctIndex;
+              } else if (typeof n.correctIndex === "number") {
+                correctIndex = n.correctIndex;
+              } else if (typeof n.quiz?.answer === "string") {
+                const idxAnswer = quizOptions.indexOf(n.quiz.answer);
+                correctIndex = idxAnswer >= 0 ? idxAnswer : undefined;
+              } else if (typeof n.quiz?.[0]?.answer === "number") {
+                correctIndex = n.quiz[0].answer;
+              }
+            }
+
+            const hasQuiz = quizQuestion && Array.isArray(quizOptions) && quizOptions.length === 4 && typeof correctIndex === "number";
+
+            return (
+              <div key={id} className="news-card fade-up">
+                <div className="news-header">
+                  <div style={{ padding:"4px 0" }}>
+                    <div style={{ fontSize:12, color:"rgba(255,255,255,.7)", textAlign:"right" }}>
+                      📰 ידיעה {idx + 1} · מקור: מקורות חדשות פתוחים (OSINT)
+                    </div>
                   </div>
                 </div>
-              </div>
-              
-              <div className="news-body">
-                <button onClick={() => toggleReveal(n.id)} className="btn-show" style={{ width:"100%", padding:8, fontSize:12, marginBottom:12, borderRadius:8 }}>
-                  {revealed.has(n.id) ? "🔼 הסתר תרגום" : "🔽 הצג תוכן ותרגום"}
-                </button>
 
-                {revealed.has(n.id) && (
-                  <div className="fade-up" style={{ marginBottom:15 }}>
-                    <div className="persian" style={{ fontSize:15, lineHeight:1.6, textAlign:"right", marginBottom:10, padding:10, borderRadius:8, background:"rgba(255,255,255,0.05)" }}>
-                       {n.content || n.persian}
+                <div className="news-body">
+                  {persian && (
+                    <div className="persian" style={{ fontSize:15, lineHeight:1.6, textAlign:"right", marginBottom:8 }}>
+                      {persian}
                     </div>
-                    <div className="hebrew" style={{ fontSize:14, lineHeight:1.5, textAlign:"right", color:"rgba(255,255,255,0.8)", borderRight:"3px solid var(--turquoise)", paddingRight:10 }}>
-                       {n.contentHebrew || n.hebrew}
+                  )}
+                  {transliteration && (
+                    <div style={{ fontSize:12, fontStyle:"italic", color:"rgba(0,0,0,.55)", marginBottom:10 }}>
+                      {transliteration}
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {/* חלק המבחן */}
-                {n.quiz && n.quiz.length > 0 && (
-                  <div style={{ marginTop:10, paddingTop:10, borderTop:"1px solid rgba(255,255,255,0.1)" }}>
-                    {!quizState[n.id] ? (
-                      <>
-                        <div style={{ fontSize:12, fontWeight:700, marginBottom:8, color:"var(--turquoise)" }}>🧠 בחן את עצמך:</div>
-                        <div className="hebrew" style={{ fontSize:13, textAlign:"right", marginBottom:8 }}>{n.quiz[0].q}</div>
-                        {n.quiz[0].options.map((opt, j) => (
-                          <button key={j} className="quiz-opt" onClick={() => handleAnswer(n.id, j, n.quiz[0].answer)} style={{ width:"100%", textAlign:"right", marginBottom:5 }}>
-                            {opt}
-                          </button>
-                        ))}
-                      </>
-                    ) : (
-                      <div style={{ textAlign:"center", padding:10, background:quizState[n.id].correct ? "rgba(0,165,145,0.15)" : "rgba(220,50,50,0.15)", borderRadius:8 }}>
-                        {quizState[n.id].correct ? "✅ מעולה! +15 XP" : "❌ לא נכון, נסה שוב!"}
-                      </div>
-                    )}
-                  </div>
-                )}
+                  <button
+                    onClick={() => toggleHe(id)}
+                    className="btn-show"
+                    style={{ width:"100%", padding:8, fontSize:12, borderRadius:8, marginBottom: revealedHe.has(id) ? 10 : 0 }}
+                  >
+                    {revealedHe.has(id) ? "🔼 הסתר תרגום לעברית" : "🔽 הצג תרגום לעברית"}
+                  </button>
 
-                {/* כפתור שיתוף */}
-                <div style={{ marginTop:12, height:1, background:"rgba(255,255,255,0.1)" }} />
-                <button className="btn-share" style={{ background:"none", border:"none", color:"#25D366", fontSize:12, marginTop:8, cursor:"pointer", width:"100%" }}>
-                   💬 שתף בקהילה
-                </button>
+                  {revealedHe.has(id) && hebrew && (
+                    <div className="hebrew" style={{ fontSize:14, lineHeight:1.5, textAlign:"right", color:"var(--indigo)", borderRight:"3px solid var(--turquoise)", paddingRight:10, marginTop:8 }}>
+                      {hebrew}
+                    </div>
+                  )}
+
+                  {hasQuiz && (
+                    <div style={{ marginTop:12, paddingTop:10, borderTop:"1px solid rgba(0,0,0,.08)" }}>
+                      {!quizState[id] ? (
+                        <>
+                          <div style={{ fontSize:12, fontWeight:700, marginBottom:8, color:"var(--turquoise)", textAlign:"right" }}>🧠 בחן את עצמך:</div>
+                          <div className="hebrew" style={{ fontSize:13, textAlign:"right", marginBottom:8 }}>{quizQuestion}</div>
+                          {quizOptions.map((opt, j) => (
+                            <button
+                              key={j}
+                              className="quiz-opt"
+                              onClick={() => handleAnswer(id, j, correctIndex)}
+                              style={{ width:"100%", textAlign:"right", marginBottom:5 }}
+                            >
+                              {opt}
+                            </button>
+                          ))}
+                        </>
+                      ) : (
+                        <div
+                          style={{
+                            textAlign:"center",
+                            padding:10,
+                            background:quizState[id].correct ? "rgba(0,165,145,0.12)" : "rgba(220,50,50,0.12)",
+                            borderRadius:8,
+                            fontSize:13,
+                          }}
+                        >
+                          {quizState[id].correct ? "✅ מעולה! +15 XP" : "❌ לא נכון, נסה שוב!"}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -940,7 +1164,8 @@ export default function App() {
   const [newsItems, setNewsItems] = useState(newsData);
   const [newsLoading, setNewsLoading] = useState(false);
   const [newsError, setNewsError] = useState(null);
-  const [cultureCardsState, setCultureCardsState] = useState(cultureData);
+  const [cultureCardsState, setCultureCardsState] = useState([]);
+  const [cultureLoading, setCultureLoading] = useState(false);
 
   // 4. מילת היום
   const [wordOfDay, setWordOfDay] = useState(null);
@@ -971,25 +1196,62 @@ export default function App() {
     finally { setWordLoading(false); }
   }, []);
 
-  const loadNews = useCallback(async () => {
+  const loadNews = useCallback(async (forceRefresh = false) => {
+    if (!forceRefresh) {
+      const cached = getCached(CACHE_KEY_NEWS);
+      if (Array.isArray(cached) && cached.length > 0) {
+        setNewsItems(cached);
+        setNewsError(false);
+        return;
+      }
+    }
     setNewsLoading(true); setNewsError(false);
     try {
       const items = await fetchAINews();
-      if (Array.isArray(items) && items.length > 0) setNewsItems(items);
-      else throw new Error("empty");
-    } catch { setNewsItems(newsData); setNewsError(true); }
+      if (Array.isArray(items) && items.length > 0) {
+        setNewsItems(items);
+        setCached(CACHE_KEY_NEWS, items);
+      } else {
+        console.warn("loadNews: items was not an array or empty", items);
+      }
+    } catch (err) {
+      console.error("loadNews error:", err);
+      setNewsError(true);
+    }
     finally { setNewsLoading(false); }
   }, []);
 
-  useEffect(() => { loadWord(); loadNews(); }, [loadWord, loadNews]);
+  const loadCulture = useCallback(async (forceRefresh = false) => {
+    if (!forceRefresh) {
+      const cached = getCached(CACHE_KEY_CULTURE);
+      if (Array.isArray(cached) && cached.length > 0) {
+        setCultureCardsState(cached);
+        return;
+      }
+    }
+    setCultureLoading(true);
+    try {
+      const items = await fetchCultureData();
+      if (Array.isArray(items) && items.length > 0) {
+        setCultureCardsState(items);
+        setCached(CACHE_KEY_CULTURE, items);
+      } else {
+        console.warn("loadCulture: items was not an array or empty", items);
+      }
+    } catch (err) {
+      console.error("loadCulture error:", err);
+    }
+    finally { setCultureLoading(false); }
+  }, []);
+
+  useEffect(() => { loadWord(); loadNews(); loadCulture(); }, [loadWord, loadNews, loadCulture]);
 
   const pageProps = {
     dashboard: { stats, wordOfDay, wordLoading, wordError, refreshWord: loadWord },
     chat:      { stats, setStats },
     vocab:     { stats, setStats },
-    // כאן היה הנתק - עכשיו חיברנו את המידע למסך
-    culture:   { cultureCards: cultureCardsState }, 
-    news:      { stats, setStats, newsItems, newsLoading, newsError, refreshNews: loadNews },
+    culture:   { cultureCards: cultureCardsState, cultureLoading, refreshCulture: () => loadCulture(true) },
+    news:      { stats, setStats, newsItems, newsLoading, newsError, refreshNews: () => loadNews(true) },
     progress:  { stats, setStats },
   };
 
@@ -999,7 +1261,10 @@ export default function App() {
   return (
     <div className="app-shell">
       <div className="header">
-        <div className="header-logo">ITS <span>MOMKEN</span></div>
+        <div className="header-logo">
+          <img src="/app-logo.png" alt="ITS MOMKEN Logo" />
+          <div className="header-tagline">Persian Made Momken</div>
+        </div>
         <div style={{ display:"flex", gap:6 }}>
           <button className="header-badge hb-fire">🔥 {stats.streak}</button>
           <button className="header-badge hb-xp" onClick={()=>setPage("progress")}>⭐ {stats.xp} XP</button>
