@@ -7,23 +7,27 @@ import { useState, useEffect, useRef, useCallback } from "react";
 // GEMINI AI SERVICE
 // ============================================================
 
-const GEMINI_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-const GEMINI_URL =
+const GEMINI_KEY = import.meta.env.VITE_GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;const GEMINI_URL =
   "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent";
 
 async function callGemini(prompt, jsonMode = true) {
   if (!GEMINI_KEY) {
     console.warn("VITE_GEMINI_API_KEY is not set.");
     return null;
-  }
-  const res = await fetch(`${GEMINI_URL}?key=${GEMINI_KEY}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.7, maxOutputTokens: jsonMode ? 2048 : 1024 },
-    }),
-  });
+  }// החליפי את הכתובת למטה בכתובת של ה-Worker שקיבלת מ-Cloudflare
+const WORKER_URL = "https://orange-paper-8280gemini-proxy.ykhv-xruxh.workers.dev/";
+
+const res = await fetch(WORKER_URL, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: { 
+      temperature: 0.7, 
+      maxOutputTokens: jsonMode ? 2048 : 1024 
+    },
+  }),
+});
   if (!res.ok) throw new Error(`Gemini API error: ${res.status}`);
   const data = await res.json();
   const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
