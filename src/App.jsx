@@ -8,11 +8,9 @@ import { useState, useEffect, useRef, useCallback } from "react";
 // ============================================================
 
 async function callGemini(prompt, jsonMode = true) {
-  // 1. הכתובת של ה-Worker שלך ב-Cloudflare
   const WORKER_URL = "https://orange-paper-8280gemini-proxy.ykhv-xruxh.workers.dev/";
 
   try {
-    // 2. שליחת הבקשה ל-Worker
     const res = await fetch(WORKER_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -25,51 +23,39 @@ async function callGemini(prompt, jsonMode = true) {
       }),
     });
 
-    if (!res.ok) {
-      throw new Error(`Worker error: ${res.status}`);
-    }
+    if (!res.ok) throw new Error(`Worker error: ${res.status}`);
 
-const data = await res.json();
-    console.log("Gemini Response:", data); // השורה הזו תדפיס לנו את התשובה ב-Console
-    return data;
+    const data = await res.json();
+    
+    // שליפת הטקסט הנקי מתוך התשובה של ג'מיני
+    const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    if (!jsonMode) return raw.trim();
+
+    // ניקוי סימני Markdown אם ג'מיני הוסיף אותם בטעות
+    const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+    return JSON.parse(cleaned);
 
   } catch (error) {
     console.error("Gemini API Error:", error);
     return null;
   }
 }
-  if (!res.ok) throw new Error(`Gemini API error: ${res.status}`);
-  const data = await res.json();
-  const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-  if (!jsonMode) return raw.trim();
-  const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-  return JSON.parse(cleaned);
-
 
 async function fetchAINews() {
   const prompt = `
-You are an OSINT analyst and Persian language teacher creating educational content for Israeli Hebrew speakers learning Persian.
-Generate exactly 5 recent, realistic OSINT-style news items about Iran or the Middle East.
-Each item must have:
-- A Persian headline (title) in Persian script
-- A Hebrew headline (titleHebrew)
-- A Persian body of 2-3 sentences (persian) in Persian script
-- A romanized transliteration (transliteration)
-- A Hebrew translation (hebrew)
-- A quiz with one question (q), four options array, and correct answer index (0-3)
-Return ONLY a valid JSON array, no markdown. Format:
+You are an OSINT analyst and Persian language teacher. 
+Generate exactly 5 recent news items about Iran or the Middle East.
+Return ONLY a valid JSON array. Format:
 [{"id":1,"title":"...","titleHebrew":"...","persian":"...","transliteration":"...","hebrew":"...","quiz":[{"q":"...","options":["...","...","...","..."],"answer":0}]}]
 `;
   return callGemini(prompt, true);
 }
 
 async function fetchWordOfDay() {
-  alert("הבקשה נשלחת לוורקר!"); // זה יופיע על המסך כשתלחצי
   const prompt = `
-You are a Persian language teacher for Hebrew speakers.
-Generate one interesting "Word of the Day" in Persian. Choose a culturally rich or emotionally expressive word.
-Return ONLY valid JSON, no markdown:
-{"persian":"...","transliteration":"...","hebrew":"...","example":"...","exampleHe":"...","grammarNote":"A short grammar or cultural note in Hebrew (1-2 sentences)"}
+You are a Persian language teacher. Generate one "Word of the Day" in Persian.
+Return ONLY valid JSON:
+{"persian":"...","transliteration":"...","hebrew":"...","example":"...","exampleHe":"...","grammarNote":"..."}
 `;
   return callGemini(prompt, true);
 }
@@ -77,27 +63,22 @@ Return ONLY valid JSON, no markdown:
 async function fetchTutorReply(history, userMessage, mode) {
   const historyText = history
     .slice(-6)
-    .map(m => `${m.role === "user" ? "Student" : "Tutor"}: ${m.persian}`)
+    .map(m => `${m.role === "user" ? "Student" : "Tutor"}: ${m.persian || m.content}`)
     .join("\n");
+
   const prompt = `
-You are a warm, encouraging Persian language tutor for Hebrew speakers. Your name is Dariush (داریوش).
-Mode: ${mode === "slang" ? "Colloquial/spoken Persian" : "Formal literary Persian"}.
-Rules:
-1. Reply primarily in Persian script.
-2. If the student made a grammar mistake, note it in Hebrew: [תיקון: ...]
-3. Keep replies to 1-3 sentences.
-4. Occasionally ask a follow-up question.
-5. Always include a Hebrew translation prefixed "HE:" and transliteration prefixed "TR:".
-6. If student struggles, say "ITS MOMKEN" encouragingly.
+You are a Persian tutor named Dariush. Mode: ${mode}.
 Conversation:
 ${historyText}
 Student: ${userMessage}
-Respond in this exact format only:
+Respond in this format:
 FA: [Persian reply]
 TR: [transliteration]
 HE: [Hebrew translation]
 CORRECTION: [Hebrew grammar note or "none"]
 `;
+  return callGemini(prompt, false); // כאן jsonMode הוא false כי הפורמט הוא טקסט חופשי
+}
   const raw = await callGemini(prompt, false);
   if (!raw) return null;
   const get = (prefix) => {
@@ -110,7 +91,7 @@ CORRECTION: [Hebrew grammar note or "none"]
     hebrew:          get("HE"),
     correction:      get("CORRECTION").toLowerCase() === "none" ? null : get("CORRECTION"),
   };
-}
+
 
 // ============================================================
 // STATIC DATA
