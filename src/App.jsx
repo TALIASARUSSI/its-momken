@@ -7,34 +7,44 @@ import { useState, useEffect, useRef, useCallback } from "react";
 // GEMINI AI SERVICE
 // ============================================================
 
-const GEMINI_KEY = import.meta.env.VITE_GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;const GEMINI_URL =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent";
-
 async function callGemini(prompt, jsonMode = true) {
-  if (!GEMINI_KEY) {
-    console.warn("VITE_GEMINI_API_KEY is not set.");
-    return null;
-  }// החליפי את הכתובת למטה בכתובת של ה-Worker שקיבלת מ-Cloudflare
-const WORKER_URL = "https://orange-paper-8280gemini-proxy.ykhv-xruxh.workers.dev/";
+  // 1. הכתובת של ה-Worker שלך ב-Cloudflare
+  const WORKER_URL = "https://orange-paper-8280gemini-proxy.ykhv-xruxh.workers.dev/";
 
-const res = await fetch(WORKER_URL, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { 
-      temperature: 0.7, 
-      maxOutputTokens: jsonMode ? 2048 : 1024 
-    },
-  }),
-});
+  try {
+    // 2. שליחת הבקשה ל-Worker
+    const res = await fetch(WORKER_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { 
+          temperature: 0.7, 
+          maxOutputTokens: jsonMode ? 2048 : 1024 
+        },
+      }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`Worker error: ${res.status}`);
+    }
+
+const data = await res.json();
+    console.log("Gemini Response:", data); // השורה הזו תדפיס לנו את התשובה ב-Console
+    return data;
+
+  } catch (error) {
+    console.error("Gemini API Error:", error);
+    return null;
+  }
+}
   if (!res.ok) throw new Error(`Gemini API error: ${res.status}`);
   const data = await res.json();
   const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
   if (!jsonMode) return raw.trim();
   const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
   return JSON.parse(cleaned);
-}
+
 
 async function fetchAINews() {
   const prompt = `
@@ -54,6 +64,7 @@ Return ONLY a valid JSON array, no markdown. Format:
 }
 
 async function fetchWordOfDay() {
+  alert("הבקשה נשלחת לוורקר!"); // זה יופיע על המסך כשתלחצי
   const prompt = `
 You are a Persian language teacher for Hebrew speakers.
 Generate one interesting "Word of the Day" in Persian. Choose a culturally rich or emotionally expressive word.
@@ -974,11 +985,22 @@ export default function App() {
     try { localStorage.setItem("momken_stats", JSON.stringify(stats)); } catch {}
   }, [stats]);
   const loadWord = useCallback(async () => {
-    setWordLoading(true); setWordError(false);
+    console.log("loadWord trigger started..."); // בדיקה ב-Console
+    setWordLoading(true); 
+    setWordError(false);
     try {
       const w = await fetchWordOfDay();
-      setWordOfDay(w || fallbackWordOfDay);
-    } catch { setWordOfDay(fallbackWordOfDay); setWordError(true); }
+      console.log("Word received in loadWord:", w); // בדיקה מה חזר
+      if (w) {
+        setWordOfDay(w);
+      } else {
+        throw new Error("No data returned");
+      }
+    } catch (err) { 
+      console.error("LoadWord Error:", err);
+      setWordOfDay(fallbackWordOfDay); 
+      setWordError(true); 
+    }
     finally { setWordLoading(false); }
   }, []);
 
