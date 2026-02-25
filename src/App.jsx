@@ -23,84 +23,59 @@ async function callGemini(prompt, jsonMode = true) {
       }),
     });
 
-    if (!res.ok) throw new Error(`Worker error: ${res.status}`);
+    if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
 
     const data = await res.json();
     
-    // שליפת הטקסט הנקי מתוך התשובה של ג'מיני
-    const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-    if (!jsonMode) return raw.trim();
+    // שליפת הטקסט מתוך המבנה של Gemini
+    const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    
+    if (!rawText) {
+      console.error("Gemini returned empty text");
+      return null;
+    }
 
-    // ניקוי סימני Markdown אם ג'מיני הוסיף אותם בטעות
-    const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-    return JSON.parse(cleaned);
+    if (!jsonMode) return rawText.trim();
+
+    // ניקוי סימני Markdown (לפעמים ג'מיני מוסיף ```json)
+    const cleanJson = rawText.replace(/```json|```/g, "").trim();
+    return JSON.parse(cleanJson);
 
   } catch (error) {
-    console.error("Gemini API Error:", error);
+    console.error("Critical Gemini Error:", error);
     return null;
   }
 }
 
 async function fetchAINews() {
-  const prompt = `
-You are an OSINT analyst and Persian language teacher. 
-Generate exactly 5 recent news items about Iran or the Middle East.
-Return ONLY a valid JSON array. Format:
-[{"id":1,"title":"...","titleHebrew":"...","persian":"...","transliteration":"...","hebrew":"...","quiz":[{"q":"...","options":["...","...","...","..."],"answer":0}]}]
-`;
+  const prompt = `Generate 5 news items about Iran in Hebrew/Persian. Return ONLY a valid JSON array.`;
   return callGemini(prompt, true);
 }
 
 async function fetchWordOfDay() {
-  const prompt = `
-You are a Persian language teacher. Generate one "Word of the Day" in Persian.
-Return ONLY valid JSON:
-{"persian":"...","transliteration":"...","hebrew":"...","example":"...","exampleHe":"...","grammarNote":"..."}
-`;
+  const prompt = `Generate one interesting Persian word of the day for Hebrew speakers. Return ONLY valid JSON: {"persian":"...","transliteration":"...","hebrew":"...","example":"...","exampleHe":"...","grammarNote":"..."}`;
   return callGemini(prompt, true);
 }
 
 async function fetchTutorReply(history, userMessage, mode) {
-  const historyText = history
-    .slice(-6)
-    .map(m => `${m.role === "user" ? "Student" : "Tutor"}: ${m.persian || m.content || ""}`)
-    .join("\n");
+  const historyText = history.slice(-5).map(m => `${m.role}: ${m.content}`).join("\n");
+  const prompt = `You are a Persian tutor. Reply to: ${userMessage}. Format: FA: [Persian] TR: [Transliteration] HE: [Hebrew] CORRECTION: [Note]`;
+  
+  const raw = await callGemini(prompt, false);
+  if (!raw) return null;
 
-  const prompt = `
-You are a warm, encouraging Persian language tutor for Hebrew speakers. Your name is Dariush (داریوش).
-Mode: ${mode === "slang" ? "Colloquial/spoken Persian" : "Formal literary Persian"}.
-Rules: Respond in the exact format:
-FA: [Persian reply]
-TR: [transliteration]
-HE: [Hebrew translation]
-CORRECTION: [Hebrew grammar note or "none"]
+  const get = (prefix) => {
+    const m = raw.match(new RegExp(`${prefix}:\\s*(.+?)(?=\\n[A-Z]+:|$)`, "s"));
+    return m ? m[1].trim() : "";
+  };
 
-Conversation:
-${historyText}
-Student: ${userMessage}
-`;
-
-  try {
-    const raw = await callGemini(prompt, false);
-    if (!raw) return null;
-
-    const get = (prefix) => {
-      const m = raw.match(new RegExp(`${prefix}:\\s*(.+?)(?=\\n[A-Z]+:|$)`, "s"));
-      return m ? m[1].trim() : "";
-    };
-
-    return {
-      persian: get("FA"),
-      transliteration: get("TR"),
-      hebrew: get("HE"),
-      correction: get("CORRECTION")
-    };
-  } catch (err) {
-    console.error("fetchTutorReply error:", err);
-    return null;
-  }
+  return {
+    persian: get("FA"),
+    transliteration: get("TR"),
+    hebrew: get("HE"),
+    correction: get("CORRECTION")
+  };
 }
-
 // ============================================================
 // STATIC DATA
 // ============================================================
